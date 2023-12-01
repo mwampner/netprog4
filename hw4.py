@@ -12,6 +12,7 @@ import csci4220_hw4_pb2
 import csci4220_hw4_pb2_grpc
 
 dht = []
+kv_list = []
 node_id = ""
 my_port = ""
 my_address = ""
@@ -46,26 +47,47 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
             address=my_address)
         
     def FindNode(self, idkey, context):
-        closest_nodes = [self.node]
-        contact_list = [self.node]
         global dht
-        # start search
+        # print message
+        print("Serving FindNode(" + str(idkey.node.id) + ") request for " + str(idkey.idkey))
+        # add requester to dht
+        found = False
         for x in range(len(dht)):
             for y in range(len(dht[x])):
-                if dht[x][y] != "" and dht[x][y].id != idkey: # node present and not target node
-                    #get distance
-                    dist = xor(idkey, dht[x][y].id)
-                    # sort closest node list
-                    if len(closest_nodes) != 0:
-                        for node in closest_nodes:
-                            if dist < xor(idkey, node.id):
-                                return
-                    closest_nodes.append(dht[x][y])
-                elif dht[x][y] != "" and dht[x][y].id != idkey: # node present is target node
-                    return csci4220_hw4_pb2.NodeList(
-                    responding_node= node_id,
-                    nodes = closest_nodes[:k]
-        )
+                if dht[x][y] != "" and dht[x][y].id == idkey.node.id:
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            bucket = xor(self.node.id, idkey.node.id)
+            for y in range(len(dht[bucket])):
+                if dht[bucket][y] == "":
+                    dht[bucket][y] = idkey.node
+                    break
+        
+        closest_nodes = [self.node]
+        contact_list = [self.node]
+        
+        # start search
+        #for x in range(len(dht)):
+        #    for y in range(len(dht[x])):
+        #        if dht[x][y] != "" and dht[x][y].id != idkey.node.id: # node present and not target node
+        #            #get distance
+        #            dist = xor(idkey, dht[x][y].id)
+        #            # sort closest node list
+        #            if len(closest_nodes) != 0:
+        #                for node in closest_nodes:
+        #                    if dist < xor(idkey, node.id):
+        #                        return
+        #            closest_nodes.append(dht[x][y])
+        #        elif dht[x][y] != "" and dht[x][y].id != idkey: # node present is target node
+        #            if len(closest_nodes) >= k:
+        #                closest_nodes = closest_nodes[:k]
+        #            return csci4220_hw4_pb2.NodeList(
+        #            responding_node= node_id,
+        #            nodes = closest_nodes
+        #)
         return csci4220_hw4_pb2.NodeList(
             responding_node= self.node,
             nodes = closest_nodes
@@ -75,10 +97,43 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         return #(KV_Node_Wrapper)
 
     def Store(self, KeyValue, context):
-        return #(IDKey)
+        # print message
+        print("Storing key " + str(KeyValue.key) + " value \"" + KeyValue.value + "\"")
+        # store key
+        global kv_list
+        kv_list.append(KeyValue)
+        # add requesting node to dht if not present
+        global dht
+        bucket = find_bucket(xor(self.node.id, KeyValue.node.id))
+        for x in range(len(dht[bucket])):
+            if dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
+                dht[bucket][x] = KeyValue.node
+                break
+            elif dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
+                break
+        return csci4220_hw4_pb2.IDKey(
+            node = self.node,
+            idkey = KeyValue.key
+        )
 
     def Quit(self, IDKey, context):
-        return #(IDKey)
+        # remove quitting node
+        global dht
+        found = False
+        
+        for x in range(len(dht)):
+            for y in range(len(dht[x])):
+                if dht[x][y] != "" and dht[x][y].id == IDKey.idkey:
+                    dht[x][y] = ""
+                    found = True
+                    print("Evicting quitting node "+ str(IDKey.idkey) + " from bucket " + str(x))
+                    break
+            if found:
+                break
+        return csci4220_hw4_pb2.IDKey(
+            node = self.node,
+            idkey = IDKey.idkey
+        )
 
 
 def run():  
@@ -117,7 +172,6 @@ def run():
         dht.append(list())
         for j in range(k):
             dht[i].append("")
-    print("pre-grpc")
     # start grpc
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     csci4220_hw4_pb2_grpc.add_KadImplServicer_to_server(
@@ -125,72 +179,145 @@ def run():
     )
     server.add_insecure_port("[::]:" + str(my_port))
     server.start()
-    print("grpc started")
-    # select
+    # variables
     inputs = [sys.stdin]
     clients = {}
     stub = ""
+    channel = ""
+    stubs = {}
+    boot = {}
+    global kv_list
     while True:
-        readable, _, _ = select.select(inputs, [], [])
-
-        for sock in readable:
-            if sock == sys.stdin: # command input
-                command = input().strip()
-                if command.startswith("BOOTSTRAP"):
-                    command = command.split()
-                    if len(command) != 3:
-                        print("Invalid BOOTSTRAP command")
-                    else:
-                        # creates a stub
-                        #grpc.insecure_channel("localhost:50051")
-                        stub = csci4220_hw4_pb2_grpc.KadImplStub(grpc.insecure_channel(my_address + ":" + command[2]))
-                        # set up node msg
-                        node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
-                        # send FindNode
-                        close = stub.FindNode(csci4220_hw4_pb2.IDKey(
-                            node = node,
-                            idkey=int(node_id)
-                        ))
-                        # add node to k_bucket
-                        dist = xor(node_id, close.responding_node.id)
-                        bucket = find_bucket(dist)
-                        place = False
-                        for x in range(len(dht[bucket])):
-                            if dht[bucket][x] == "":
-                                dht[bucket][x] = close.responding_node
-                                place = True
-                                break
-                            if place:
-                                break
-
-                        print("After BOOTSTRAP(" + str(close.responding_node.id) + "), k-buckets are:")
-                        print_kbuckets()
-                        
-
-                elif command.startswith("FIND_NODE"):
-                    command = command.split()
-                    if len(command) != 2:
-                        print("Invalid FIND_NODE command")
-                    else:
-                        print("Before FIND_NODE command, k-buckets are:")
-                        print_kbuckets()
-                        
-                        # Run FIND_NODE search
-
-                        print("After FIND_NODE command, k-buckets are:")
-                        print_kbuckets()
-                elif command.startswith("STORE"):
-                    if len(command) != 2:
-                        print("Invalid STORE command")
-                elif command.startswith("FIND_VALUE"):
-                    if len(command) != 2:
-                        print("Invalid FIND_VALUE command")
-                elif command.startswith("QUIT"):
-                    exit()
+        command = input().strip()
+        if command != "": # command input
+            
+            if command.startswith("BOOTSTRAP"):
+                command = command.split()
+                if len(command) != 3:
+                    print("Invalid BOOTSTRAP command")
                 else:
-                    print("Invalid command")
-        #elif: # message from current connection
-        #else: # new connection
+                    # creates a stub
+                    #grpc.insecure_channel("localhost:50051")
+                    if channel != "":
+                        channel.close()
+                    channel = grpc.insecure_channel(my_address + ":" + command[2])
+                    stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+                    # set up node msg
+                    node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
+                    # send FindNode
+                    close = stub.FindNode(csci4220_hw4_pb2.IDKey(
+                        node = node,
+                        idkey=int(node_id)
+                    ))
+                    # add node to k_bucket
+                    dist = xor(node_id, close.responding_node.id)
+                    bucket = find_bucket(dist)
+                    place = False
+                    stubs[close.responding_node.id] = stub 
+                    boot[close.responding_node.id] = channel
+                    for x in range(len(dht[bucket])):
+                        if dht[bucket][x] == "":
+                            dht[bucket][x] = close.responding_node
+                            place = True
+                            break
+                        if place:
+                            break
+                    # print message
+                    print("After BOOTSTRAP(" + str(close.responding_node.id) + "), k-buckets are:")
+                    print_kbuckets()
+                    
+            elif command.startswith("FIND_NODE"):
+                command = command.split()
+                if len(command) != 2:
+                    print("Invalid FIND_NODE command")
+                else:
+                    print("Before FIND_NODE command, k-buckets are:")
+                    print_kbuckets()
+                    
+                    # Run FIND_NODE search
+
+                    print("After FIND_NODE command, k-buckets are:")
+                    print_kbuckets()
+            elif command.startswith("STORE"):
+                command = command.split()
+                if len(command) != 3:
+                    print("Invalid STORE command")
+                else:
+                    closest = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
+                    dist = xor(closest.id, int(command[1]))
+                    # check dht for closer node
+                    for x in range(len(dht)):
+                        for y in range(len(dht[x])):
+                            if dht[x][y] != "":
+                                if(xor(dht[x][y].id, int(command[1])) < dist):
+                                    dist = xor(dht[x][y].id, int(command[1]))
+                                    closest = dht[x][y]
+                    # check for self being closest
+                    if closest.id == int(node_id):
+                        kv_list.append(csci4220_hw4_pb2.KeyValue(
+                            node =closest,
+                            key=int(command[1]),
+                            value=command[2]
+                        ))
+                    else: # send to closer node
+                        kv = csci4220_hw4_pb2.KeyValue(
+                            node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
+                            key=int(command[1]),
+                            value=command[2]
+                        )
+                        if closest.id in stubs.keys(): # check for current stub
+                            stubs[closest.id].Store(csci4220_hw4_pb2.KeyValue(
+                                node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
+                                key=int(command[1]),
+                                value=command[2]
+                            ))
+                        else: # create new stub
+                            channel2 = grpc.insecure_channel(my_address + ":" + str(closest.port))
+                            stub2 = csci4220_hw4_pb2_grpc.KadImplStub()
+                            stub2.Store(csci4220_hw4_pb2.KeyValue(
+                                node =closest,
+                                key=int(command[1]),
+                                value=command[2]
+                            ))
+                            # close new channel
+                            channel2.close()
+                    # print message
+                    print("Storing key " + command[1] + " at node " + str(closest.id))
+
+            elif command.startswith("FIND_VALUE"):
+                if len(command) != 2:
+                    print("Invalid FIND_VALUE command")
+            elif command.startswith("QUIT"):
+                # inform known nodes of quit
+                print_kbuckets()
+                for x in range(len(dht)):
+                    for y in range(len(dht[x])):
+                        if dht[x][y] != "":
+                            if len(boot) > 0 and dht[x][y].id in boot.keys():
+                                stubs[dht[x][y].id].Quit(csci4220_hw4_pb2.IDKey(
+                                    node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
+                                    idkey=node_id
+                                ))
+                            else:
+                                print(dht[x][y])
+                                channel2 = grpc.insecure_channel(my_address + ":" + str(dht[x][y].port))
+                                stub2 = csci4220_hw4_pb2_grpc.KadImplStub(channel2)
+                                stub2.Quit(csci4220_hw4_pb2.IDKey(
+                                    node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
+                                    idkey=node_id
+                                ))
+                                channel2.close()
+
+                # shut down self
+                print("Shut down node " + str(node_id))
+                if channel != "":
+                    channel.close()
+                server.stop(1)
+                exit()
+            else:
+                print("Invalid command")
+    #elif: # message from current connection
+    #else: # new connection
             
 
 
