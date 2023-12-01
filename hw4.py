@@ -94,7 +94,18 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         )
 
     def FindValue(self, IDKey, context):
-        return #(KV_Node_Wrapper)
+        global kv_list
+        # check self
+        for x in range(len(kv_list)):
+            if(IDKey.idkey == kv_list[x].key):
+                return csci4220_hw4_pb2.KV_Node_Wrapper(
+                    responding_node = self.node,
+                    mode_kv = True,
+                    kv = kv_list[x],
+                    nodes = [self.node]
+                )
+                break
+        return 
 
     def Store(self, KeyValue, context):
         # print message
@@ -285,11 +296,33 @@ def run():
                     print("Storing key " + command[1] + " at node " + str(closest.id))
 
             elif command.startswith("FIND_VALUE"):
+                command = command.split()
                 if len(command) != 2:
                     print("Invalid FIND_VALUE command")
+                else:
+                    # check for value
+                    found = False
+                    for x in range(len(kv_list)):
+                        if int(command[1]) == kv_list[x].key:
+                            print("Found data \"" + kv_list[x].value + "\" for key " + command[1])
+                            found = True
+                            break
+                    # send find_value rpc
+                    if not found:
+                        kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
+                            node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
+                            idkey=int(command[1])
+                        ))
+                        if kv.mode_kv: # value found
+                            print("Found value \"" + kv.kv.value + "\" for key " + command[1])
+                        else: # value not foud
+                            print("Could not find key " + command[1])
+
+
+                    print("After FIND_VALUE command, k-buckets are:")
+                    print_kbuckets()
             elif command.startswith("QUIT"):
                 # inform known nodes of quit
-                print_kbuckets()
                 for x in range(len(dht)):
                     for y in range(len(dht[x])):
                         if dht[x][y] != "":
