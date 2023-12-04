@@ -11,6 +11,7 @@ import grpc
 import csci4220_hw4_pb2
 import csci4220_hw4_pb2_grpc
 
+# global variables
 dht = []
 kv_list = []
 node_id = ""
@@ -37,8 +38,83 @@ def find_bucket(dist):
             num = i
             return i
 
-def find_node(stub):
+def add_node(node): # adds node to most recent spot in dht
+    global dht
+    bucket = find_bucket(xor(int(x.id), int(node_id)))
+    # add node to dht
+    if node not in dht:
+        if dht[bucket][0] == "":
+            dht[bucket][0] = node
+        else: # shift nodes
+            tmp1 = node
+            tmp2 = ""
+            for y in range(len(dht[bucket])):
+                tmp2 = dht[bucket][y]
+                dht[bucket][y] = tmp1
+                tmp1 = tmp2
+
     return
+
+def find_node(node):
+    
+
+    return
+
+def find_value(key):
+    global dht
+    node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
+
+    # start search
+    close_list = []
+    visited = []
+    closest = ""
+    dist = -1
+    for x in range(len(dht)):
+        for y in range(len(dht[x])):
+            if(dht[x][y] != "" and (dist == -1 or xor(dht[x][y].id, key) < dist)):
+                dist = xor(dht[x][y].id, key)
+                closest = dht[x][y]
+    visited.append(closest)       
+    channel = grpc.insecure_channel(my_address + ":" + str(closest.port))
+    stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+    kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
+        node=node,
+        idkey = key
+    ))
+    channel.close()
+
+    if not kv.mode_kv: # value not found
+        close_list = kv.nodes
+        # add nodes from close_list to dht
+        for x in close_list:
+            add_node(x)
+
+        while not kv.mode_kv and len(close_list) != 0:
+            for x in visited: # remove visted nodes from closest
+                if x in close_list:
+                    close_list.remove(x)
+            # run FindValue for all in closelist
+            for x in close_list:
+                channel = grpc.insecure_channel(my_address + ":" + str(x.port))
+                stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+                # add all from closelist to visited
+                visited.append(x)
+                kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
+                    node=node,
+                    idkey = key
+                ))
+                # add nodes to close_list for visiting
+                for x in kv.nodes:
+                    close_list.apppend()
+                # add nodes to dht
+                for x in kv.nodes:
+                    add_node(x)
+                # check if value was found
+                if kv.mode_kv:
+                    break
+                
+    return kv
+
 class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
     def __init__(self):
         self.node = csci4220_hw4_pb2.Node(
@@ -60,7 +136,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
             if found:
                 break
         if not found:
-            bucket = xor(self.node.id, idkey.node.id)
+            bucket = find_bucket(xor(self.node.id, idkey.node.id))
             for y in range(len(dht[bucket])):
                 if dht[bucket][y] == "":
                     dht[bucket][y] = idkey.node
@@ -93,11 +169,12 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
             nodes = closest_nodes
         )
 
-    def FindValue(self, IDKey, context):
+    def FindValue(self, idkey, context):
         global kv_list
+        global dht
         # check self
         for x in range(len(kv_list)):
-            if(IDKey.idkey == kv_list[x].key):
+            if(idkey.idkey == kv_list[x].key):
                 return csci4220_hw4_pb2.KV_Node_Wrapper(
                     responding_node = self.node,
                     mode_kv = True,
@@ -105,7 +182,28 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
                     nodes = [self.node]
                 )
                 break
-        return 
+        
+        # find closest nodes
+        closest = {}
+        for x in range(len(dht)):
+            for y in range(len(dht[x])):
+                if(dht[x][y] != "" and dht[x][y].id != idkey.node.id): # exclude requesting node
+                    closest[xor(idkey.idkey, dht[x][y].id)] =  dht[x][y]
+        closest = sorted(closest)
+        # get k closest
+        closest_nodes = []
+        count = 0
+        for i in closest:
+            if count < k:
+                closest_nodes.append(closest[i])
+            else:
+                break
+
+        return csci4220_hw4_pb2.KV_Node_Wrapper(
+                    responding_node = self.node,
+                    mode_kv = False,
+                    nodes = closest_nodes
+                )
 
     def Store(self, KeyValue, context):
         # print message
@@ -131,7 +229,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         # remove quitting node
         global dht
         found = False
-        
+        channel = ""
         for x in range(len(dht)):
             for y in range(len(dht[x])):
                 if dht[x][y] != "" and dht[x][y].id == IDKey.idkey:
@@ -163,10 +261,6 @@ def run():
     
     # get key for node
     node_key = hash(node_name)
-    #m = hashlib.sha1()
-    ##m.update(b"This is a str")
-    #m.update(b"ring in two parts")
-    #m.digest() #Gives the actual hash
 
     global my_port
     my_port = str(int(sys.argv[2])) # add_insecure_port() will want a string
@@ -193,10 +287,7 @@ def run():
     # variables
     inputs = [sys.stdin]
     clients = {}
-    stub = ""
-    channel = ""
     stubs = {}
-    boot = {}
     global kv_list
     while True:
         command = input().strip()
@@ -209,8 +300,6 @@ def run():
                 else:
                     # creates a stub
                     #grpc.insecure_channel("localhost:50051")
-                    if channel != "":
-                        channel.close()
                     channel = grpc.insecure_channel(my_address + ":" + command[2])
                     stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                     # set up node msg
@@ -224,8 +313,6 @@ def run():
                     dist = xor(node_id, close.responding_node.id)
                     bucket = find_bucket(dist)
                     place = False
-                    stubs[close.responding_node.id] = stub 
-                    boot[close.responding_node.id] = channel
                     for x in range(len(dht[bucket])):
                         if dht[bucket][x] == "":
                             dht[bucket][x] = close.responding_node
@@ -236,6 +323,10 @@ def run():
                     # print message
                     print("After BOOTSTRAP(" + str(close.responding_node.id) + "), k-buckets are:")
                     print_kbuckets()
+                    # close channel
+                    channel.close()
+                    channel = ""
+                    stub = ""
                     
             elif command.startswith("FIND_NODE"):
                 command = command.split()
@@ -271,27 +362,15 @@ def run():
                             value=command[2]
                         ))
                     else: # send to closer node
-                        kv = csci4220_hw4_pb2.KeyValue(
-                            node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
+                        channel = grpc.insecure_channel(my_address + ":" + str(closest.port))
+                        stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+                        stub.Store(csci4220_hw4_pb2.KeyValue(
+                            node =csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
                             key=int(command[1]),
                             value=command[2]
-                        )
-                        if closest.id in stubs.keys(): # check for current stub
-                            stubs[closest.id].Store(csci4220_hw4_pb2.KeyValue(
-                                node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
-                                key=int(command[1]),
-                                value=command[2]
-                            ))
-                        else: # create new stub
-                            channel2 = grpc.insecure_channel(my_address + ":" + str(closest.port))
-                            stub2 = csci4220_hw4_pb2_grpc.KadImplStub()
-                            stub2.Store(csci4220_hw4_pb2.KeyValue(
-                                node =closest,
-                                key=int(command[1]),
-                                value=command[2]
-                            ))
-                            # close new channel
-                            channel2.close()
+                        ))
+                        # close new channel
+                        channel.close()
                     # print message
                     print("Storing key " + command[1] + " at node " + str(closest.id))
 
@@ -300,23 +379,25 @@ def run():
                 if len(command) != 2:
                     print("Invalid FIND_VALUE command")
                 else:
-                    # check for value
+                    print("Before FIND_VALUE command, k-buckets are:")
+                    print_kbuckets()
+                    # check for LOCAL value
                     found = False
                     for x in range(len(kv_list)):
                         if int(command[1]) == kv_list[x].key:
                             print("Found data \"" + kv_list[x].value + "\" for key " + command[1])
                             found = True
                             break
-                    # send find_value rpc
+                    # send find_value rpc to closest node
                     if not found:
-                        kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
-                            node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
-                            idkey=int(command[1])
-                        ))
+                        kv = find_value(int(command[1]))
+                        
                         if kv.mode_kv: # value found
                             print("Found value \"" + kv.kv.value + "\" for key " + command[1])
                         else: # value not foud
                             print("Could not find key " + command[1])
+                        
+                        # add closest visited nodes to 
 
 
                     print("After FIND_VALUE command, k-buckets are:")
@@ -326,40 +407,22 @@ def run():
                 for x in range(len(dht)):
                     for y in range(len(dht[x])):
                         if dht[x][y] != "":
-                            if len(boot) > 0 and dht[x][y].id in boot.keys():
-                                stubs[dht[x][y].id].Quit(csci4220_hw4_pb2.IDKey(
-                                    node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
-                                    idkey=node_id
-                                ))
-                            else:
-                                print(dht[x][y])
-                                channel2 = grpc.insecure_channel(my_address + ":" + str(dht[x][y].port))
-                                stub2 = csci4220_hw4_pb2_grpc.KadImplStub(channel2)
-                                stub2.Quit(csci4220_hw4_pb2.IDKey(
-                                    node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
-                                    idkey=node_id
-                                ))
-                                channel2.close()
+                            print("Letting " + str(dht[x][y].id) + " know I'm quitting.")
+                            channel = grpc.insecure_channel(my_address + ":" + str(dht[x][y].port))
+                            stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+                            stub.Quit(csci4220_hw4_pb2.IDKey(
+                                node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
+                                idkey=node_id
+                            ))
+                            channel.close()
 
                 # shut down self
                 print("Shut down node " + str(node_id))
-                if channel != "":
-                    channel.close()
                 server.stop(1)
                 exit()
             else:
                 print("Invalid command")
-    #elif: # message from current connection
-    #else: # new connection
-            
 
-
-	#''' Use the following code to convert a hostname to an IP and start a channel
-	#Note that every stub needs a channel attached to it
-	#When you are done with a channel you should call .close() on the channel.
-	#Submitty may kill your program if you have too many file descriptors open
-	#at the same time. '''
-	
 	#remote_addr = socket.gethostbyname(remote_addr_string)
 	#remote_port = int(remote_port_string)
 	#channel = grpc.insecure_channel(remote_addr + ':' + str(remote_port))
