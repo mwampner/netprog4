@@ -40,12 +40,16 @@ def find_bucket(dist):
 
 def add_node(node): # adds node to most recent spot in dht
     global dht
-    bucket = find_bucket(xor(int(x.id), int(node_id)))
+    bucket = find_bucket(xor(int(node.id), int(node_id)))
     # add node to dht
-    if node not in dht:
+    if node not in dht[bucket]:
         if dht[bucket][0] == "":
             dht[bucket][0] = node
         else: # shift nodes
+            # remove node
+            for x in range(len(dht[bucket])):
+                if dht[bucket][x].id == node.id:
+                    dht[bucket][x] = ""
             tmp1 = node
             tmp2 = ""
             for y in range(len(dht[bucket])):
@@ -55,8 +59,62 @@ def add_node(node): # adds node to most recent spot in dht
 
     return
 
-def find_node(node):
-    
+def find_node(dest_id):
+    global dht
+    node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
+
+    # start search
+    close_list = []
+    visited = []
+    closest = ""
+    dist = -1
+    for x in range(len(dht)):
+        for y in range(len(dht[x])):
+            if(dht[x][y] != "" and (dist == -1 or xor(dht[x][y].id, dest_id) < dist)):
+                dist = xor(dht[x][y].id, dest_id)
+                closest = dht[x][y]
+    visited.append(closest)       
+    channel = grpc.insecure_channel(my_address + ":" + str(closest.port))
+    stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+    kv = stub.FindNode(csci4220_hw4_pb2.IDKey(
+        node=node,
+        idkey = dest_id
+    ))
+    channel.close()
+
+    if kv.responding_node.id != node.id: # value not found
+        close_list = kv.nodes
+        # add nodes from close_list to dht
+        for x in close_list:
+            add_node(x)
+
+        while kv.responding_node.id != node.id and len(close_list) != 0:
+            for x in visited: # remove visted nodes from closest
+                if x in close_list:
+                    close_list.remove(x)
+            # run FindValue for all in closelist
+            for x in close_list:
+                channel = grpc.insecure_channel(my_address + ":" + str(x.port))
+                stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+                # add all from closelist to visited
+                visited.append(x)
+                kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
+                    node=node,
+                    idkey = dest_id
+                ))
+                # add nodes to close_list for visiting
+                for y in kv.nodes:
+                    close_list.apppend(y)
+                # add nodes to dht
+                for y in kv.nodes:
+                    add_node(y)
+                # remove from close_list
+                close_list.remove(x)
+                # check if value was found
+                if kv.responding_node.id == dest_id:
+                    break
+                
+    return kv    
 
     return
 
@@ -105,7 +163,7 @@ def find_value(key):
                 ))
                 # add nodes to close_list for visiting
                 for x in kv.nodes:
-                    close_list.apppend()
+                    close_list.append(x)
                 # add nodes to dht
                 for x in kv.nodes:
                     add_node(x)
@@ -141,29 +199,50 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
                 if dht[bucket][y] == "":
                     dht[bucket][y] = idkey.node
                     break
-        
-        closest_nodes = [self.node]
-        contact_list = [self.node]
-        
-        # start search
-        #for x in range(len(dht)):
-        #    for y in range(len(dht[x])):
-        #        if dht[x][y] != "" and dht[x][y].id != idkey.node.id: # node present and not target node
-        #            #get distance
-        #            dist = xor(idkey, dht[x][y].id)
-        #            # sort closest node list
-        #            if len(closest_nodes) != 0:
-        #                for node in closest_nodes:
-        #                    if dist < xor(idkey, node.id):
-        #                        return
-        #            closest_nodes.append(dht[x][y])
-        #        elif dht[x][y] != "" and dht[x][y].id != idkey: # node present is target node
-        #            if len(closest_nodes) >= k:
-        #                closest_nodes = closest_nodes[:k]
-        #            return csci4220_hw4_pb2.NodeList(
-        #            responding_node= node_id,
-        #            nodes = closest_nodes
-        #)
+        # check for bootstrap
+        if idkey.node.id == idkey.idkey:
+            closest = {}
+            for x in range(len(dht)):
+                for y in range(len(dht[x])):
+                    if(dht[x][y] != "" and dht[x][y].id != idkey.node.id): # exclude requesting node
+                        closest[xor(idkey.idkey, dht[x][y].id)] =  dht[x][y]
+            closest = dict(sorted(closest.items()))
+            # get k closest
+            closest_nodes = []
+            count = 0
+            for i in closest:
+                if count < k:
+                    closest_nodes.append(closest[i])
+                else:
+                    break
+            return csci4220_hw4_pb2.NodeList(
+                responding_node= self.node,
+                nodes = closest_nodes
+            )
+        # check for node in k-buckets
+        for x in range(len(dht)):
+            for y in range(len(dht[x])):
+                if(dht[x][y] != "" and dht[x][y].id == idkey.idkey):
+                    return csci4220_hw4_pb2.NodeList(
+                        responding_node= dht[x][y],
+                        nodes = []
+                    )
+        # sort closest_nodes
+        closest = {}
+        for x in range(len(dht)):
+            for y in range(len(dht[x])):
+                if(dht[x][y] != "" and dht[x][y].id != idkey.node.id): # exclude requesting node
+                    closest[xor(idkey.idkey, dht[x][y].id)] =  dht[x][y]
+        closest = dict(sorted(closest.items()))
+        # get k closest
+        closest_nodes = []
+        count = 0
+        for i in closest:
+            if count < k:
+                closest_nodes.append(closest[i])
+            else:
+                break
+
         return csci4220_hw4_pb2.NodeList(
             responding_node= self.node,
             nodes = closest_nodes
@@ -172,6 +251,8 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
     def FindValue(self, idkey, context):
         global kv_list
         global dht
+        #print message 
+        print("Serving FindKey(" + str(idkey.idkey) + ") for " + str(idkey.node.id))
         # check self
         for x in range(len(kv_list)):
             if(idkey.idkey == kv_list[x].key):
@@ -189,7 +270,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
             for y in range(len(dht[x])):
                 if(dht[x][y] != "" and dht[x][y].id != idkey.node.id): # exclude requesting node
                     closest[xor(idkey.idkey, dht[x][y].id)] =  dht[x][y]
-        closest = sorted(closest)
+        closest = dict(sorted(closest.items()))
         # get k closest
         closest_nodes = []
         count = 0
@@ -210,6 +291,11 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         print("Storing key " + str(KeyValue.key) + " value \"" + KeyValue.value + "\"")
         # store key
         global kv_list
+        # check for existing key/value
+        for x in kv_list:
+            if x.key == KeyValue.key:
+                kv_list.remove(x)
+                break
         kv_list.append(KeyValue)
         # add requesting node to dht if not present
         global dht
@@ -310,16 +396,14 @@ def run():
                         idkey=int(node_id)
                     ))
                     # add node to k_bucket
-                    dist = xor(node_id, close.responding_node.id)
+                    dist = xor(int(node_id), close.responding_node.id)
                     bucket = find_bucket(dist)
                     place = False
-                    for x in range(len(dht[bucket])):
-                        if dht[bucket][x] == "":
-                            dht[bucket][x] = close.responding_node
-                            place = True
-                            break
-                        if place:
-                            break
+                    add_node(close.responding_node)
+                    # add closest nodes
+                    for x in close.nodes:
+                        add_node(x)
+
                     # print message
                     print("After BOOTSTRAP(" + str(close.responding_node.id) + "), k-buckets are:")
                     print_kbuckets()
@@ -337,6 +421,21 @@ def run():
                     print_kbuckets()
                     
                     # Run FIND_NODE search
+                    # check for self find
+                    if int(command[1]) == int(node_id):
+                        print("Found destination id " + command[1])
+                    else: # check for node in dht
+                        dest = ""
+                        for x in range(len(dht)):
+                            for y in range(len(dht[x][y])):
+                                if(dht[x][y] != "" and dht[x][y].id == int(command[1])):
+                                    dest = dht[x][y]
+                        # search all nodes
+
+                        if dest == "": # node not found
+                            print("Could not find destination id " + command[1])
+                        else: # node found
+                            print("Found destination id " + command[1])
 
                     print("After FIND_NODE command, k-buckets are:")
                     print_kbuckets()
@@ -398,8 +497,11 @@ def run():
                             print("Could not find key " + command[1])
                         
                         # add closest visited nodes to 
+                        for x in kv.nodes:
+                            add_node(x)
 
-
+                        # move node to front of list
+                        add_node(kv.responding_node)
                     print("After FIND_VALUE command, k-buckets are:")
                     print_kbuckets()
             elif command.startswith("QUIT"):
