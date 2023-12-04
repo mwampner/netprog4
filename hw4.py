@@ -23,9 +23,11 @@ def print_kbuckets():
     global dht
     for x in range(len(dht)):
         b = str(x) + ":"
-        for y in range(len(dht[x])):
-            if(dht[x][y] != ""):
-                b = b + " " + str(dht[x][y].id) + ":" + str(dht[x][y].port)
+        count = k-1
+        while count >= 0:
+            if(dht[x][count] != ""):
+                b = b + " " + str(dht[x][count].id) + ":" + str(dht[x][count].port)
+            count = count -1
         print(b)
 
 def xor(id1, id2):
@@ -120,6 +122,7 @@ def find_node(dest_id):
 
 def find_value(key):
     global dht
+    global kv_list
     node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
 
     # start search
@@ -127,21 +130,37 @@ def find_value(key):
     visited = []
     closest = ""
     dist = -1
-    for x in range(len(dht)):
-        for y in range(len(dht[x])):
-            if(dht[x][y] != "" and (dist == -1 or xor(dht[x][y].id, key) < dist)):
-                dist = xor(dht[x][y].id, key)
-                closest = dht[x][y]
-    visited.append(closest)       
-    channel = grpc.insecure_channel(my_address + ":" + str(closest.port))
-    stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
-    kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
-        node=node,
-        idkey = key
-    ))
-    channel.close()
+    kv = ""
+    # search self
+    found = False
+    for x in kv_list:
+        if x.key == key:
+            kv = csci4220_hw4_pb2.KV_Node_Wrapper(
+                responding_node = node,
+                mode_kv=True,
+                kv=kv,
+                nodes=[]
+            )
+            found = True
+    
+    if not found:
+        for x in range(len(dht)):
+            for y in range(len(dht[x])):
+                if(dht[x][y] != "" and (dist == -1 or xor(dht[x][y].id, key) < dist)):
+                    dist = xor(dht[x][y].id, key)
+                    closest = dht[x][y]
+        if closest != "": # check for empty k-buckets
+            visited.append(closest)
+            
+            channel = grpc.insecure_channel(my_address + ":" + str(closest.port))
+            stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
+            kv = stub.FindValue(csci4220_hw4_pb2.IDKey(
+                node=node,
+                idkey = key
+            ))
+            channel.close()
 
-    if not kv.mode_kv: # value not found
+    if closest != "" and not kv.mode_kv: # value not found
         close_list = kv.nodes
         # add nodes from close_list to dht
         for x in close_list:
@@ -277,6 +296,8 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         for i in closest:
             if count < k:
                 closest_nodes.append(closest[i])
+                # indicate node was used
+                #add_node(closest[i])
             else:
                 break
 
@@ -491,14 +512,17 @@ def run():
                     if not found:
                         kv = find_value(int(command[1]))
                         
-                        if kv.mode_kv: # value found
+                        if kv == "": # no nodes available for search:
+                            print("Could not find key " + command[1])
+                        elif kv.mode_kv: # value found
                             print("Found value \"" + kv.kv.value + "\" for key " + command[1])
                         else: # value not foud
                             print("Could not find key " + command[1])
                         
-                        # add closest visited nodes to 
-                        for x in kv.nodes:
-                            add_node(x)
+                        # add closest visited nodes to
+                        if kv != "": 
+                            for x in kv.nodes:
+                                add_node(x)
 
                         # move node to front of list
                         add_node(kv.responding_node)
@@ -507,16 +531,18 @@ def run():
             elif command.startswith("QUIT"):
                 # inform known nodes of quit
                 for x in range(len(dht)):
-                    for y in range(len(dht[x])):
-                        if dht[x][y] != "":
-                            print("Letting " + str(dht[x][y].id) + " know I'm quitting.")
-                            channel = grpc.insecure_channel(my_address + ":" + str(dht[x][y].port))
+                    count = k-1
+                    while count >= 0:
+                        if dht[x][count] != "":
+                            print("Letting " + str(dht[x][count].id) + " know I'm quitting.")
+                            channel = grpc.insecure_channel(my_address + ":" + str(dht[x][count].port))
                             stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                             stub.Quit(csci4220_hw4_pb2.IDKey(
                                 node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
                                 idkey=node_id
                             ))
                             channel.close()
+                        count = count -1
 
                 # shut down self
                 print("Shut down node " + str(node_id))
