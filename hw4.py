@@ -19,7 +19,7 @@ my_port = ""
 my_address = ""
 k = ""
 
-def print_kbuckets():
+def print_kbuckets(): # print k-buckets in correct format
     global dht
     for x in range(len(dht)):
         b = str(x) + ":"
@@ -30,17 +30,17 @@ def print_kbuckets():
             count = count -1
         print(b)
 
-def xor(id1, id2):
+def xor(id1, id2): # get distance between two ids
     return id1 ^ id2
 
-def find_bucket(dist):
+def find_bucket(dist): # finds bucket based on distance
     num = 0
     for i in range(4):
         if 2**i <= dist and dist < 2**(i+1):
             num = i
             return i
 
-def find_hostname(connect_id):
+def find_hostname(connect_id): # returns host name based on connect id >=/< 10
     host = "peer"
     if connect_id < 10:
         host = host + "0" + str(connect_id)
@@ -56,11 +56,6 @@ def add_node(node): # adds node to most recent spot in dht
         if dht[bucket][0] == "":
             dht[bucket][0] = node
         else: # shift nodes
-            # remove node
-            #for x in range(len(dht[bucket])):
-            #    if dht[bucket][x].id == node.id:
-            #        dht[bucket][x] = ""
-                
             tmp1 = node
             tmp2 = ""
             for y in range(len(dht[bucket])):
@@ -73,11 +68,13 @@ def add_node(node): # adds node to most recent spot in dht
                     tmp1 = tmp2
     else: # shift to top spot
         if dht[bucket][0] != node:
+            # remove from list so not their twice
             for x in range(len(dht[bucket])):
                 if node == dht[bucket][x]:
                     dht[bucket][x] = ""
             tmp1 = node
             tmp2 = ""
+            # add node to most recently used
             for x in range(len(dht[bucket])):
                 if dht[bucket][x]=="":
                     dht[bucket][x] = tmp1
@@ -86,10 +83,9 @@ def add_node(node): # adds node to most recent spot in dht
                     tmp2 = dht[bucket][x]
                     dht[bucket][x] = tmp1
                     tmp1 = tmp2
-
     return
 
-def find_node(dest_id):
+def find_node(dest_id): # Runs FindNode RPC
     global dht
     node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
 
@@ -99,6 +95,7 @@ def find_node(dest_id):
     visited = []
     closest = ""
     dist = -1
+    # Find closest node to destination
     for x in range(len(dht)):
         for y in range(len(dht[x])):
             if(dht[x][y] != "" and (dist == -1 or xor(dht[x][y].id, dest_id) < dist)):
@@ -108,22 +105,22 @@ def find_node(dest_id):
     # submission address
     peer_address = find_hostname(closest.id)
     channel = grpc.insecure_channel(peer_address + ":" + str(closest.port))
+    # initial FindNode call
     stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
     kv = stub.FindNode(csci4220_hw4_pb2.IDKey(
         node=node,
         idkey = dest_id
     ))
     channel.close()
-    # add nodes
+    # add nodes to dht
     for x in kv.nodes:
         add_node(x)
 
-    if kv.responding_node.id != dest_id: # value not found
+    if kv.responding_node.id != dest_id: # value not found and continue
         close_list = kv.nodes
         # add nodes from close_list to dht
-        
         found = False
-        for x in close_list:
+        for x in close_list: # check if destination was in responding node's k-buckets
             if x.id == dest_id:
                 found = True
             add_node(x)
@@ -137,7 +134,7 @@ def find_node(dest_id):
                 for x in close_list:
                     # submission address
                     peer_address = find_hostname(x.id)
-                    channel = grpc.insecure_channel(my_address + ":" + str(x.port))
+                    channel = grpc.insecure_channel(peer_address + ":" + str(x.port))
                     stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                     # add all from closelist to visited
                     visited.append(x)
@@ -157,15 +154,10 @@ def find_node(dest_id):
                         add_node(kv.responding_node)
                         for y in kv.nodes:
                             add_node(y)
-                        break
-            #if kv.responding_node.id == dest_id:
-            #    print(visited)
-            #    print("!!!!!!")
-            #    print(kv.nodes)
-                
+                        break                
     return kv    
 
-def find_value(key):
+def find_value(key): # calls FindValue RPC
     global dht
     global kv_list
     node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
@@ -236,8 +228,7 @@ def find_value(key):
                     add_node(x)
                 # check if value was found
                 if kv.mode_kv:
-                    break
-                
+                    break   
     return kv
 
 class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
@@ -255,20 +246,8 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         found = False
         nl = ""
         add_node(idkey.node)
-        #for x in range(len(dht)):
-        #    for y in range(len(dht[x])):
-        #        if dht[x][y] != "" and dht[x][y].id == idkey.node.id:
-        #            found = True
-        #            break
-        #    if found:
-        #        break
-        #if not found:
-        #    bucket = find_bucket(xor(self.node.id, idkey.node.id))
-        #    for y in range(len(dht[bucket])):
-        #        if dht[bucket][y] == "":
-        #            dht[bucket][y] = idkey.node
-        #            break
-        # check for bootstrap
+
+        # check for bootstrap command response
         if idkey.node.id == idkey.idkey:
             closest = {}
             for x in range(len(dht)):
@@ -294,10 +273,6 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
             for y in range(len(dht[x])):
                 if(dht[x][y] != "" and dht[x][y].id == idkey.idkey):
                     return_node = dht[x][y]
-                    #return csci4220_hw4_pb2.NodeList(
-                    #    responding_node= dht[x][y],
-                    #    nodes = []
-                    #)
         # sort closest_nodes
         closest = {}
         for x in range(len(dht)):
@@ -309,7 +284,6 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         closest_nodes = []
         count = 0
         for i in closest:
-            
             if count < k:
                 closest_nodes.append(closest[i])
             else:
@@ -325,7 +299,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         global kv_list
         global dht
         #print message 
-        print("Serving FindKey request(" + str(idkey.idkey) + ") for " + str(idkey.node.id))
+        print("Serving FindKey(" + str(idkey.idkey) + ") request for " + str(idkey.node.id))
         # add node to dht
         add_node(idkey.node)
         # check self
@@ -350,8 +324,6 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         for i in closest:
             if count < k:
                 closest_nodes.append(closest[i])
-                # indicate node was used
-                #add_node(closest[i])
             else:
                 break
             count = count +1 
@@ -375,14 +347,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         kv_list.append(KeyValue)
         # add requesting node to dht if not present
         add_node(KeyValue.node)
-        #global dht
-        #bucket = find_bucket(xor(self.node.id, KeyValue.node.id))
-        #for x in range(len(dht[bucket])):
-        #    if dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
-        #        dht[bucket][x] = KeyValue.node
-        #        break
-        #    elif dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
-        #        break
+    
         return csci4220_hw4_pb2.IDKey(
             node = self.node,
             idkey = KeyValue.key
@@ -411,25 +376,14 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
 def run():  
     if len(sys.argv) != 4:
         print("Error, correct usage is {} [my id] [my port] [k]".format(sys.argv[0]))
-        sys.exit(-1)   
+        sys.exit(-1)  
+    # set up global variables for local node 
     global node_id
     node_id = int(sys.argv[1])
-
-    node_name = ""
-    if(node_id < 2):
-        node_name = "peer0" + sys.argv[1]
-    else:
-        node_name = "peer" + sys.argv[1]
-    
-    # get key for node
-    node_key = hash(node_name)
-
     global my_port
     my_port = str(int(sys.argv[2])) # add_insecure_port() will want a string
     global k
     k = int(sys.argv[3])
-    my_hostname = socket.gethostname() # Gets my host name
-	#my_address = socket.gethostbyname(my_hostname) # Gets my IP address from my hostname
     global my_address
     my_address = socket.gethostbyname('localhost')
 
@@ -439,31 +393,24 @@ def run():
         dht.append(list())
         for j in range(k):
             dht[i].append("")
-    # start grpc
+    # start grpc server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     csci4220_hw4_pb2_grpc.add_KadImplServicer_to_server(
         KadImplServicer(), server
     )
     server.add_insecure_port("[::]:" + str(my_port))
     server.start()
-    # variables
-    inputs = [sys.stdin]
-    clients = {}
-    stubs = {}
     global kv_list
     while True:
         command = input().strip()
         if command != "": # command input
-            
             if command.startswith("BOOTSTRAP"):
                 command = command.split()
                 if len(command) != 3:
                     print("Invalid BOOTSTRAP command")
                 else:
-                    # creates a stub
-                    #grpc.insecure_channel("localhost:50051")
                     # submission address
-                    #my_address = find_hostname(int(command[1]))
+                    # connect to node
                     channel = grpc.insecure_channel(command[1] + ":" + command[2])
                     stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                     # set up node msg
@@ -474,14 +421,10 @@ def run():
                         idkey=int(node_id)
                     ))
                     # add node to k_bucket
-                    dist = xor(int(node_id), close.responding_node.id)
-                    bucket = find_bucket(dist)
-                    place = False
                     add_node(close.responding_node)
                     # add closest nodes
                     for x in close.nodes:
                         add_node(x)
-
                     # print message
                     print("After BOOTSTRAP(" + str(close.responding_node.id) + "), k-buckets are:")
                     print_kbuckets()
@@ -496,12 +439,10 @@ def run():
                 else:
                     print("Before FIND_NODE command, k-buckets are:")
                     print_kbuckets()
-                    
-                    # Run FIND_NODE search
                     # check for self find
                     if int(command[1]) == int(node_id):
                         print("Found destination id " + command[1])
-                    else: # check for node in dht
+                    else: # check for node in k-buckets
                         dest = ""
                         for x in range(len(dht)):
                             for y in range(len(dht[x])):
@@ -510,7 +451,6 @@ def run():
                         # search all nodes
                         if dest == "":
                             dest = find_node(int(command[1]))
-
                         if dest == "": # node not found
                             print("Could not find destination id " + command[1])
                         else: # node found
@@ -534,6 +474,7 @@ def run():
                                     closest = dht[x][y]
                     # check for self being closest
                     if closest.id == int(node_id):
+                        # add to local list
                         kv_list.append(csci4220_hw4_pb2.KeyValue(
                             node =closest,
                             key=int(command[1]),
@@ -543,6 +484,7 @@ def run():
                         # submission address
                         peer_address = find_hostname(closest.id)
                         channel = grpc.insecure_channel(peer_address + ":" + str(closest.port))
+                        # send to remote node
                         stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                         stub.Store(csci4220_hw4_pb2.KeyValue(
                             node =csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address),
@@ -553,7 +495,6 @@ def run():
                         channel.close()
                     # print message
                     print("Storing key " + command[1] + " at node " + str(closest.id))
-
             elif command.startswith("FIND_VALUE"):
                 command = command.split()
                 if len(command) != 2:
@@ -571,7 +512,6 @@ def run():
                     # send find_value rpc to closest node
                     if not found:
                         kv = find_value(int(command[1]))
-                        
                         if kv == "": # no nodes available for search:
                             print("Could not find key " + command[1])
                         elif kv.mode_kv: # value found
@@ -583,8 +523,8 @@ def run():
                         if kv != "": 
                             for x in kv.nodes:
                                 add_node(x)
-                        # move node to front of list
-                        add_node(kv.responding_node)
+                            # move node to front of list
+                            add_node(kv.responding_node)
                     print("After FIND_VALUE command, k-buckets are:")
                     print_kbuckets()
             elif command.startswith("QUIT"):
@@ -595,31 +535,27 @@ def run():
                         if dht[x][count] != "":
                             print("Letting " + str(dht[x][count].id) + " know I'm quitting.")
                             
-                            try:
+                            try: # send QUIT to nodes in dht
                                 # submission address
                                 peer_address = find_hostname(dht[x][count].id)
                                 channel = grpc.insecure_channel(peer_address + ":" + str(dht[x][count].port))
+                                # send quit to node
                                 stub = csci4220_hw4_pb2_grpc.KadImplStub(channel)
                                 stub.Quit(csci4220_hw4_pb2.IDKey(
                                     node = csci4220_hw4_pb2.Node(id=node_id, port=int(my_port), address=my_address),
                                     idkey=node_id
                                 ))
                                 channel.close()
-                            except grpc._channel._InactiveRpcError:
+                            except: # account for remote node already being closed (they weren't mutually in each others' k-buckets)
                                 dht[x][count] = ""
                                 break
                         count = count -1
-
                 # shut down self
                 print("Shut down node " + str(node_id))
                 server.stop(1)
                 exit()
             else:
                 print("Invalid command")
-
-	#remote_addr = socket.gethostbyname(remote_addr_string)
-	#remote_port = int(remote_port_string)
-	#channel = grpc.insecure_channel(remote_addr + ':' + str(remote_port))
 
 if __name__ == '__main__':
 	run()
