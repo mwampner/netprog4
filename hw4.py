@@ -49,15 +49,35 @@ def add_node(node): # adds node to most recent spot in dht
             dht[bucket][0] = node
         else: # shift nodes
             # remove node
-            for x in range(len(dht[bucket])):
-                if dht[bucket][x].id == node.id:
-                    dht[bucket][x] = ""
+            #for x in range(len(dht[bucket])):
+            #    if dht[bucket][x].id == node.id:
+            #        dht[bucket][x] = ""
+                
             tmp1 = node
             tmp2 = ""
             for y in range(len(dht[bucket])):
-                tmp2 = dht[bucket][y]
-                dht[bucket][y] = tmp1
-                tmp1 = tmp2
+                if dht[bucket][y] == "":
+                    dht[bucket][y] = tmp1
+                    break
+                else:
+                    tmp2 = dht[bucket][y]
+                    dht[bucket][y] = tmp1
+                    tmp1 = tmp2
+    else: # shift to top spot
+        if dht[bucket][0] != node:
+            for x in range(len(dht[bucket])):
+                if node == dht[bucket][x]:
+                    dht[bucket][x] = ""
+            tmp1 = node
+            tmp2 = ""
+            for x in range(len(dht[bucket])):
+                if dht[bucket][x]=="":
+                    dht[bucket][x] = tmp1
+                    break
+                else:
+                    tmp2 = dht[bucket][x]
+                    dht[bucket][x] = tmp1
+                    tmp2 = tmp1
 
     return
 
@@ -66,6 +86,7 @@ def find_node(dest_id):
     node = csci4220_hw4_pb2.Node(id=int(node_id), port=int(my_port), address=my_address)
 
     # start search
+    kv = ""
     close_list = []
     visited = []
     closest = ""
@@ -108,7 +129,7 @@ def find_node(dest_id):
                 for y in kv.nodes:
                     close_list.apppend(y)
                 # add nodes to dht
-                for y in kv.nodes:
+                for y in visited:
                     add_node(y)
                 # remove from close_list
                 close_list.remove(x)
@@ -117,8 +138,6 @@ def find_node(dest_id):
                     break
                 
     return kv    
-
-    return
 
 def find_value(key):
     global dht
@@ -205,6 +224,7 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         print("Serving FindNode(" + str(idkey.node.id) + ") request for " + str(idkey.idkey))
         # add requester to dht
         found = False
+        nl = ""
         for x in range(len(dht)):
             for y in range(len(dht[x])):
                 if dht[x][y] != "" and dht[x][y].id == idkey.node.id:
@@ -343,15 +363,15 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
                     dht[x][y] = ""
                     found = True
                     print("Evicting quitting node "+ str(IDKey.idkey) + " from bucket " + str(x))
-                    break
+                    return csci4220_hw4_pb2.IDKey(
+                        node = self.node,
+                        idkey = IDKey.idkey
+                    )
             if found:
                 break
-        return csci4220_hw4_pb2.IDKey(
-            node = self.node,
-            idkey = IDKey.idkey
-        )
-
-
+        print("No record of quitting node " + str(IDKey.idkey) + " in k-buckets.")
+        return
+        
 def run():  
     if len(sys.argv) != 4:
         print("Error, correct usage is {} [my id] [my port] [k]".format(sys.argv[0]))
@@ -432,7 +452,6 @@ def run():
                     channel.close()
                     channel = ""
                     stub = ""
-                    
             elif command.startswith("FIND_NODE"):
                 command = command.split()
                 if len(command) != 2:
@@ -452,7 +471,8 @@ def run():
                                 if(dht[x][y] != "" and dht[x][y].id == int(command[1])):
                                     dest = dht[x][y]
                         # search all nodes
-
+                        if dest == "":
+                            dest = find_node(int(command[1]))
                         if dest == "": # node not found
                             print("Could not find destination id " + command[1])
                         else: # node found
@@ -523,7 +543,6 @@ def run():
                         if kv != "": 
                             for x in kv.nodes:
                                 add_node(x)
-
                         # move node to front of list
                         add_node(kv.responding_node)
                     print("After FIND_VALUE command, k-buckets are:")
