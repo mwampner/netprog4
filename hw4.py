@@ -77,7 +77,7 @@ def add_node(node): # adds node to most recent spot in dht
                 else:
                     tmp2 = dht[bucket][x]
                     dht[bucket][x] = tmp1
-                    tmp2 = tmp1
+                    tmp1 = tmp2
 
     return
 
@@ -292,6 +292,8 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
         global dht
         #print message 
         print("Serving FindKey(" + str(idkey.idkey) + ") for " + str(idkey.node.id))
+        # add node to dht
+        add_node(idkey.node)
         # check self
         for x in range(len(kv_list)):
             if(idkey.idkey == kv_list[x].key):
@@ -339,14 +341,15 @@ class KadImplServicer(csci4220_hw4_pb2_grpc.KadImplServicer):
                 break
         kv_list.append(KeyValue)
         # add requesting node to dht if not present
-        global dht
-        bucket = find_bucket(xor(self.node.id, KeyValue.node.id))
-        for x in range(len(dht[bucket])):
-            if dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
-                dht[bucket][x] = KeyValue.node
-                break
-            elif dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
-                break
+        add_node(KeyValue.node)
+        #global dht
+        #bucket = find_bucket(xor(self.node.id, KeyValue.node.id))
+        #for x in range(len(dht[bucket])):
+        #    if dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
+        #        dht[bucket][x] = KeyValue.node
+        #        break
+        #    elif dht[bucket][x] != "" and dht[bucket][x].id != KeyValue.node.id:
+        #        break
         return csci4220_hw4_pb2.IDKey(
             node = self.node,
             idkey = KeyValue.key
